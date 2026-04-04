@@ -470,10 +470,24 @@ def _detect_ci(file_tree):
     if file_tree is None:
         return 0, []
 
+    # Partition CI paths into exact-match files vs directory prefixes
+    _EXACT_CI_PATHS = {p for p in CI_CONFIG_PATHS if "/" not in p}
+    _DIR_CI_PREFIXES = [p + "/" for p in CI_CONFIG_PATHS if "/" in p or p == ".github/workflows"]
+
     detected = []
-    for cfg in CI_CONFIG_PATHS:
-        if cfg in file_tree or any(p.startswith(cfg + "/") for p in file_tree):
+    # Exact matches are O(1) set lookups
+    for cfg in _EXACT_CI_PATHS:
+        if cfg in file_tree:
             detected.append(cfg)
+
+    # Directory prefix matches: single pass through file_tree
+    for path in file_tree:
+        for prefix in _DIR_CI_PREFIXES:
+            if path.startswith(prefix):
+                cfg = prefix.rstrip("/")
+                if cfg not in detected:
+                    detected.append(cfg)
+                break  # this path matched; move to next file_tree entry
 
     if not detected:
         return 0, []
@@ -509,10 +523,14 @@ class AxiosSupplyChainPlugin(ScanPlugin):
 
     def should_scan_repo(self, repo_info: dict, file_tree: Optional[Set[str]]) -> bool:
         if file_tree is not None:
-            return any(
-                p.endswith("/package.json") or p == "package.json"
-                for p in file_tree
-            )
+            # O(1) check for root-level package.json first
+            if "package.json" in file_tree:
+                return True
+            # Check known subdirs before falling back to full scan
+            for subdir in TARGET_SUBDIRS:
+                if subdir and f"{subdir}/package.json" in file_tree:
+                    return True
+            return False
         return True
 
     def evaluate(self, repo_info: dict, files: Dict[str, Optional[str]],
