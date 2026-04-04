@@ -1,6 +1,9 @@
 # Scan output and checkpoints
 axios_exposure.json
+scan_results.json
+scan_results.csv
 *.progress.json
+.ghscan_checkpoint.json
 
 # Python
 __pycache__/
