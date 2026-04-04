@@ -40,6 +40,7 @@ def save_progress(output_path, scanned_repos, findings):
     """Atomic checkpoint write: write to temp file, then os.replace()."""
     pp = progress_path(output_path)
     with _checkpoint_lock:
+        tmp_path = None
         try:
             dir_name = os.path.dirname(os.path.abspath(pp))
             with tempfile.NamedTemporaryFile(
@@ -55,11 +56,11 @@ def save_progress(output_path, scanned_repos, findings):
             os.replace(tmp_path, pp)
         except Exception as e:
             thread_print(f"\n  [WARN] Could not save checkpoint: {e}", flush=True)
-            try:
-                if 'tmp_path' in locals():
+            if tmp_path is not None:
+                try:
                     os.unlink(tmp_path)
-            except OSError:
-                pass
+                except OSError:
+                    pass
 
 
 def clear_progress(output_path):

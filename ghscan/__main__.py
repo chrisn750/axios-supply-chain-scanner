@@ -6,12 +6,26 @@ import os
 import sys
 
 from ghscan import __version__
-from ghscan.cli.colors import bold, bold_cyan, dim
+from ghscan.cli.colors import bold, bold_cyan, bold_red, dim
 from ghscan.core.scanner import scan_org
 from ghscan.core.checkpoint import clear_progress
 from ghscan.reporting.terminal import print_report
 from ghscan.reporting.json_report import save_json
 from ghscan.reporting.csv_report import save_csv
+
+
+def _validate_output_path(output_file):
+    """Check that the output file's directory exists and is writable before scanning."""
+    if not output_file:
+        return True
+    output_dir = os.path.dirname(os.path.abspath(output_file))
+    if not os.path.isdir(output_dir):
+        print(bold_red(f"[ERROR] Output directory does not exist: {output_dir}"))
+        return False
+    if not os.access(output_dir, os.W_OK):
+        print(bold_red(f"[ERROR] Output directory is not writable: {output_dir}"))
+        return False
+    return True
 
 
 def run_scan(config):
@@ -23,18 +37,24 @@ def run_scan(config):
     output_format = config["output_format"]
     output_file = config["output_file"]
     verbose = config.get("verbose", False)
+    quiet = config.get("quiet", False)
+
+    # Validate output path before starting the scan
+    if not _validate_output_path(output_file):
+        sys.exit(1)
 
     # Print scan header
-    print()
-    print(bold_cyan("[GHSCAN]") + f" GitHub Organization Security Scanner v{__version__}")
-    print(f"  Org      : https://github.com/{org}/")
-    print(f"  Plugins  : {', '.join(p.metadata().name for p in plugins)}")
-    print(f"  Workers  : {workers}")
-    if output_file:
-        print(f"  Output   : {output_file} ({output_format.upper()})")
-    else:
-        print(f"  Output   : terminal only")
-    print()
+    if not quiet:
+        print()
+        print(bold_cyan("[GHSCAN]") + f" GitHub Organization Security Scanner v{__version__}")
+        print(f"  Org      : https://github.com/{org}/")
+        print(f"  Plugins  : {', '.join(p.metadata().name for p in plugins)}")
+        print(f"  Workers  : {workers}")
+        if output_file:
+            print(f"  Output   : {output_file} ({output_format.upper()})")
+        else:
+            print(f"  Output   : terminal only")
+        print()
 
     # Determine output path for checkpointing
     checkpoint_path = output_file if output_file else os.path.join(
@@ -49,10 +69,12 @@ def run_scan(config):
         plugins=plugins,
         max_workers=workers,
         verbose=verbose,
+        quiet=quiet,
     )
 
     # Report results
-    print_report(findings, org, plugins)
+    if not quiet:
+        print_report(findings, org, plugins)
 
     # Write output file
     if output_file:
@@ -63,7 +85,8 @@ def run_scan(config):
 
     # Clear checkpoint
     clear_progress(checkpoint_path)
-    print(dim("\n  [DONE] Progress file cleared.\n"))
+    if not quiet:
+        print(dim("\n  [DONE] Progress file cleared.\n"))
 
 
 def main():

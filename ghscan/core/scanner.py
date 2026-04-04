@@ -14,6 +14,7 @@ from ghscan.core.checkpoint import (
     load_progress, save_progress, get_checkpoint_lock,
 )
 from ghscan.core.results import RepoScanResult
+from ghscan.cli.progress import ProgressBar
 from ghscan.utils import thread_print
 
 SAVE_EVERY = 25
@@ -121,7 +122,8 @@ def scan_repo(session, repo, rate_limiter, plugins):
     return result.to_dict()
 
 
-def scan_org(org, token, output_path, plugins, max_workers=5, verbose=False):
+def scan_org(org, token, output_path, plugins, max_workers=5,
+             verbose=False, quiet=False):
     """
     Scan all repos in the org using a thread pool.
     Rate limiting is shared across all workers.
@@ -133,6 +135,8 @@ def scan_org(org, token, output_path, plugins, max_workers=5, verbose=False):
 
     scanned_names, findings = load_progress(output_path)
     checkpoint_lock = get_checkpoint_lock()
+
+    progress_bar = ProgressBar(total, enabled=not quiet)
 
     thread_local = threading.local()
 
@@ -146,28 +150,33 @@ def scan_org(org, token, output_path, plugins, max_workers=5, verbose=False):
         name = repo["full_name"]
 
         if name in scanned_names:
-            if verbose:
+            if verbose and not quiet:
                 thread_print(
                     f"  [{idx:4d}/{total}] {name}  [skipped -- already scanned]",
                     flush=True)
             return name, None
 
-        thread_print(f"  [{idx:4d}/{total}] {name}", end="  ", flush=True)
+        if not quiet:
+            thread_print(f"  [{idx:4d}/{total}] {name}", end="  ", flush=True)
 
         sess = get_thread_session()
         result = scan_repo(sess, repo, rate_limiter, plugins)
 
-        if result:
-            max_sev = result.get("max_severity", "info")
-            emoji = SEVERITY_EMOJI.get(max_sev, "")
-            n_findings = len(result.get("findings", []))
-            thread_print(f"{emoji} {max_sev.upper()} ({n_findings} finding(s))", flush=True)
-        else:
-            thread_print("--  clean", flush=True)
+        if not quiet:
+            if result:
+                max_sev = result.get("max_severity", "info")
+                emoji = SEVERITY_EMOJI.get(max_sev, "")
+                n_findings = len(result.get("findings", []))
+                thread_print(
+                    f"{emoji} {max_sev.upper()} ({n_findings} finding(s))", flush=True)
+            else:
+                thread_print("--  clean", flush=True)
 
         return name, result
 
-    thread_print(f"[*] Scanning {total} repos ({max_workers} workers)...\n", flush=True)
+    if not quiet:
+        thread_print(
+            f"[*] Scanning {total} repos ({max_workers} workers)...\n", flush=True)
 
     completed = 0
     work_items = [(i, repo) for i, repo in enumerate(repos, 1)]
@@ -183,7 +192,8 @@ def scan_org(org, token, output_path, plugins, max_workers=5, verbose=False):
             except Exception as e:
                 item = future_to_item[future]
                 name = item[1]["full_name"]
-                thread_print(f"\n  [ERROR] Exception scanning {name}: {e}", flush=True)
+                thread_print(
+                    f"\n  [ERROR] Exception scanning {name}: {e}", flush=True)
                 result = None
 
             with checkpoint_lock:
@@ -192,11 +202,16 @@ def scan_org(org, token, output_path, plugins, max_workers=5, verbose=False):
                     findings.append(result)
                 completed += 1
 
+            findings_delta = len(result.get("findings", [])) if result else 0
+            progress_bar.update(findings_delta)
+
             if completed % SAVE_EVERY == 0:
                 save_progress(output_path, scanned_names, findings)
-                thread_print(
-                    f"\n  [CHECKPOINT] Saved ({completed}/{total} repos scanned)\n",
-                    flush=True)
+                if not quiet:
+                    thread_print(
+                        f"\n  [CHECKPOINT] Saved ({completed}/{total} repos scanned)\n",
+                        flush=True)
 
+    progress_bar.finish()
     save_progress(output_path, scanned_names, findings)
     return findings

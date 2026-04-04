@@ -25,8 +25,11 @@ def save_csv(findings, output_path):
         return
 
     fieldnames = ["repo", "url", "pushed_at", "plugin", "severity", "score", "title"]
-    with open(output_path, "w", newline="") as fh:
-        writer = csv.DictWriter(fh, fieldnames=fieldnames)
-        writer.writeheader()
-        writer.writerows(rows)
-    print(f"  [OUTPUT] CSV results written to {output_path}")
+    try:
+        with open(output_path, "w", newline="") as fh:
+            writer = csv.DictWriter(fh, fieldnames=fieldnames)
+            writer.writeheader()
+            writer.writerows(rows)
+        print(f"  [OUTPUT] CSV results written to {output_path}")
+    except (IOError, OSError) as e:
+        print(f"  [ERROR] Failed to write CSV report to {output_path}: {e}")

@@ -7,11 +7,12 @@ import importlib
 import inspect
 import os
 import sys
+import traceback
 
 from ghscan.plugin_api import ScanPlugin
 
 
-def discover_plugins(plugins_dir=None):
+def discover_plugins(plugins_dir=None, verbose=False):
     """
     Recursively discover and instantiate all ScanPlugin subclasses
     in the plugins directory.
@@ -55,6 +56,8 @@ def discover_plugins(plugins_dir=None):
             except Exception as e:
                 from ghscan.utils import thread_print
                 thread_print(f"  [WARN] Failed to load plugin {module_path}: {e}", flush=True)
+                if verbose:
+                    traceback.print_exc()
                 continue
 
             for _name, obj in inspect.getmembers(module, inspect.isclass):
@@ -70,6 +73,8 @@ def discover_plugins(plugins_dir=None):
                         thread_print(
                             f"  [WARN] Failed to instantiate plugin {obj.__name__}: {e}",
                             flush=True)
+                        if verbose:
+                            traceback.print_exc()
 
     results.sort(key=lambda x: (x[0], x[1].metadata().name))
     return results

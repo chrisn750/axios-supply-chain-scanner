@@ -35,6 +35,9 @@ def save_json(findings, output_path, org, plugins):
         "findings": findings_sorted,
     }
 
-    with open(output_path, "w") as fh:
-        json.dump(out, fh, indent=2)
-    print(f"  [OUTPUT] JSON results written to {output_path}")
+    try:
+        with open(output_path, "w") as fh:
+            json.dump(out, fh, indent=2)
+        print(f"  [OUTPUT] JSON results written to {output_path}")
+    except (IOError, OSError) as e:
+        print(f"  [ERROR] Failed to write JSON report to {output_path}: {e}")

@@ -12,6 +12,9 @@ __pycache__/
 .venv/
 venv/
 
+# ghscan config (may contain sensitive preferences)
+.ghscan.json
+
 # IDE
 .vscode/
 .idea/
