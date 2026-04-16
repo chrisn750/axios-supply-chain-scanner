@@ -954,7 +954,7 @@ def scan_repo(session, repo, rate_limiter, include_identity=False, recent_commit
             session, full_name, rate_limiter, limit=recent_committers
         )
 
-    return {
+    finding = {
         "repo":           full_name,
         "repo_id":        repo_id,
         "url":            html_url,
@@ -976,9 +976,11 @@ def scan_repo(session, repo, rate_limiter, include_identity=False, recent_commit
         "axios_entries":  axios_entries,
         "lockfile_file":  lockfile_file,
         "lockfile_ver":   lockfile_ver,
-        "owner_identity": owner_identity,
-        "recent_committers": committer_info,
     }
+    if include_identity:
+        finding["owner_identity"] = owner_identity
+        finding["recent_committers"] = committer_info
+    return finding
 
 
 # ---------------------------------------------------------------------------
