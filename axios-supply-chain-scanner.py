@@ -802,11 +802,48 @@ def detect_ci(session, repo_full_name, rate_limiter, file_tree=None):
     return score, detected
 
 
+def fetch_recent_committers(session, repo_full_name, rate_limiter, limit=5):
+    """
+    Return recent commit identity signals for a repository's default branch.
+    Best-effort only: author/committer emails may be private or unavailable.
+    """
+    if limit <= 0:
+        return []
+
+    url = f"{GITHUB_API}/repos/{repo_full_name}/commits"
+    resp = safe_get(session, url, {"per_page": max(1, min(limit, 100))}, rate_limiter)
+    if resp is None or resp.status_code != 200:
+        return []
+
+    committers = []
+    for item in resp.json():
+        commit = item.get("commit", {}) or {}
+        author = commit.get("author", {}) or {}
+        committer = commit.get("committer", {}) or {}
+        gh_author = item.get("author") or {}
+        gh_committer = item.get("committer") or {}
+        committers.append({
+            "sha": item.get("sha"),
+            "author_date": author.get("date"),
+            "author_name": author.get("name"),
+            "author_email": author.get("email"),
+            "committer_date": committer.get("date"),
+            "committer_name": committer.get("name"),
+            "committer_email": committer.get("email"),
+            "author_login": gh_author.get("login"),
+            "author_id": gh_author.get("id"),
+            "committer_login": gh_committer.get("login"),
+            "committer_id": gh_committer.get("id"),
+            "author_association": item.get("author_association"),
+        })
+    return committers
+
+
 # ---------------------------------------------------------------------------
 # Per-repo scan
 # ---------------------------------------------------------------------------
 
-def scan_repo(session, repo, rate_limiter):
+def scan_repo(session, repo, rate_limiter, include_identity=False, recent_committers=5):
     """
     Scan a single repo. Returns a result dict, or None if axios is not
     present or all specs are definitively safe.
@@ -816,6 +853,7 @@ def scan_repo(session, repo, rate_limiter):
     default_branch = repo.get("default_branch", "main")
     html_url       = repo["html_url"]
     pushed_at      = repo.get("pushed_at", "")
+    owner          = repo.get("owner", {}) or {}
 
     # 0. Fetch file tree to minimise API calls
     file_tree = get_repo_tree(session, full_name, default_branch, rate_limiter)
@@ -904,6 +942,18 @@ def scan_repo(session, repo, rate_limiter):
     else:
         tier = "LOW"
 
+    owner_identity = None
+    committer_info = []
+    if include_identity:
+        owner_identity = {
+            "login": owner.get("login"),
+            "id": owner.get("id"),
+            "type": owner.get("type"),
+        }
+        committer_info = fetch_recent_committers(
+            session, full_name, rate_limiter, limit=recent_committers
+        )
+
     return {
         "repo":           full_name,
         "repo_id":        repo_id,
@@ -926,6 +976,8 @@ def scan_repo(session, repo, rate_limiter):
         "axios_entries":  axios_entries,
         "lockfile_file":  lockfile_file,
         "lockfile_ver":   lockfile_ver,
+        "owner_identity": owner_identity,
+        "recent_committers": committer_info,
     }
 
 
@@ -996,7 +1048,8 @@ def clear_progress(output_path):
 # Org scan (concurrent)
 # ---------------------------------------------------------------------------
 
-def scan_org(org, token, output_path, max_workers=5):
+def scan_org(org, token, output_path, max_workers=5,
+             include_identity=False, recent_committers=5):
     """
     Scan all repos in the org using a thread pool.
     Rate limiting is shared across all workers.
@@ -1029,7 +1082,13 @@ def scan_org(org, token, output_path, max_workers=5):
         thread_print(f"  [{idx:4d}/{total}] {name}", end="  ", flush=True)
 
         sess   = get_thread_session()
-        result = scan_repo(sess, repo, rate_limiter)
+        result = scan_repo(
+            sess,
+            repo,
+            rate_limiter,
+            include_identity=include_identity,
+            recent_committers=recent_committers,
+        )
 
         if result:
             emoji = TIER_EMOJI.get(result["tier"], "")
@@ -1128,6 +1187,28 @@ def print_report(findings, org):
             print(f"  Lockfile : {f['lockfile_file']} pins axios@{f['lockfile_ver']}")
         else:
             print(f"  Lockfile : none found")
+        owner_identity = f.get("owner_identity")
+        if owner_identity:
+            print(
+                "  Owner    : "
+                f"{owner_identity.get('login')} "
+                f"(id={owner_identity.get('id')}, type={owner_identity.get('type')})"
+            )
+        recent_committers = f.get("recent_committers", [])
+        if recent_committers:
+            print("  Recent committers:")
+            for c in recent_committers:
+                author = c.get("author_login") or c.get("author_name") or "unknown-author"
+                committer = c.get("committer_login") or c.get("committer_name") or "unknown-committer"
+                author_email = c.get("author_email") or "n/a"
+                committer_email = c.get("committer_email") or "n/a"
+                assoc = c.get("author_association") or "UNKNOWN"
+                print(
+                    f"    {c.get('sha', '')[:12]} "
+                    f"author={author} <{author_email}> "
+                    f"committer={committer} <{committer_email}> "
+                    f"assoc={assoc}"
+                )
 
     print(f"\n  {'─'*68}")
     print("  NOTE: A clean result does not mean a repo was unaffected. If CI ran")
@@ -1203,6 +1284,20 @@ def main():
         "--ci-paths", nargs="*", default=None,
         help="CI config paths to detect (overrides built-in list)",
     )
+    parser.add_argument(
+        "--include-identity", action="store_true",
+        help=(
+            "Include repo owner and recent committer identity metadata in findings. "
+            "May increase API usage."
+        ),
+    )
+    parser.add_argument(
+        "--recent-committers", type=int, default=5,
+        help=(
+            "Number of recent commits to inspect per exposed repo when "
+            "--include-identity is set (default: 5, max: 20)."
+        ),
+    )
     args = parser.parse_args()
 
     if not args.token:
@@ -1214,6 +1309,7 @@ def main():
 
     # Clamp workers
     args.workers = max(1, min(args.workers, 15))
+    args.recent_committers = max(1, min(args.recent_committers, 20))
 
     # Resolve output path to prevent path confusion
     args.output = os.path.realpath(args.output)
@@ -1229,6 +1325,9 @@ def main():
     print(f"  Org        : https://github.com/{args.org}/")
     print(f"  Output     : {args.output}")
     print(f"  Workers    : {args.workers}  |  Checkpoint every {SAVE_EVERY} repos")
+    print(f"  Identity   : {'enabled' if args.include_identity else 'disabled'}")
+    if args.include_identity:
+        print(f"  Committers : {args.recent_committers} recent commits per exposed repo")
     print(f"  Bad vers   : axios@1.14.1, axios@0.30.4")
     print(f"  Window     : 2026-03-31 00:21-03:30 UTC")
     if HAS_YAML:
@@ -1238,7 +1337,9 @@ def main():
     print()
 
     findings = scan_org(args.org, args.token, args.output,
-                        max_workers=args.workers)
+                        max_workers=args.workers,
+                        include_identity=args.include_identity,
+                        recent_committers=args.recent_committers)
     print_report(findings, args.org)
     save_json(findings, args.output, args.org)
     clear_progress(args.output)
