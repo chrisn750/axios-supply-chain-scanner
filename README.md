@@ -149,6 +149,8 @@ python3 axios-supply-chain-scanner.py --org <ORG> [OPTIONS]
 | `--workers` | `5` | Concurrent scanning threads (1–15) |
 | `--subdirs` | `'' app src client server frontend backend api` | Subdirectories to check for `package.json` |
 | `--ci-paths` | *(built-in list)* | CI config paths to detect |
+| `--include-identity` | `false` | Include repo owner + recent committer identity metadata in findings |
+| `--recent-committers` | `5` | Number of recent commits to inspect per exposed repo when identity mode is enabled (1–20) |
 
 ### Examples
 
@@ -220,6 +222,16 @@ The JSON file contains machine-readable results suitable for ingestion into SIEM
       "repo": "my-org/web-app",
       "repo_id": 123456789,
       "url": "https://github.com/my-org/web-app",
+      "owner_identity": { "login": "my-org", "id": 42, "type": "Organization" },
+      "recent_committers": [
+        {
+          "sha": "abc123...",
+          "author_login": "jdoe",
+          "author_name": "Jane Doe",
+          "author_email": "jane@company.com",
+          "author_association": "MEMBER"
+        }
+      ],
       "default_branch": "main",
       "pushed_at": "2026-03-31T02:15:00Z",
       "scanned_at": "2026-04-01T15:30:12+00:00",
@@ -234,7 +246,7 @@ The JSON file contains machine-readable results suitable for ingestion into SIEM
 }
 ```
 
-Each finding includes `repo_id` (GitHub's numeric ID) and `scanned_at` (ISO 8601) for deduplication and audit trails.
+Each finding includes `repo_id` (GitHub's numeric ID) and `scanned_at` (ISO 8601) for deduplication and audit trails. If identity mode is enabled, findings also include `owner_identity` and `recent_committers` metadata to support employee correlation workflows.
 
 ---
 
